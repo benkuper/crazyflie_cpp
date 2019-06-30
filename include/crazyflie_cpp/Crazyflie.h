@@ -14,18 +14,22 @@
 
 #define ENABLE_SAFELINK 1
 
-class Logger
+#if _WIN32
+#pragma warning(disable:4267 4245)
+#endif
+
+class CFLogger
 {
 public:
-  Logger() {}
-  virtual ~Logger() {}
+	CFLogger() {}
+  virtual ~CFLogger() {}
 
   virtual void info(const std::string& /*msg*/) {}
   virtual void warning(const std::string& /*msg*/) {}
   virtual void error(const std::string& /*msg*/) {}
 };
 
-extern Logger EmptyLogger;
+extern CFLogger EmptyLogger;
 
 class Crazyflie
 {
@@ -113,7 +117,7 @@ public:
 public:
   Crazyflie(
     const std::string& link_uri,
-    Logger& logger = EmptyLogger,
+	CFLogger& logger = EmptyLogger,
     std::function<void(const char*)> consoleCb = nullptr);
 
   int getProtocolVersion();
@@ -535,7 +539,7 @@ private:
   int m_protocolVersion;
 
   // logging
-  Logger& m_logger;
+  CFLogger& m_logger;
 };
 
 template<class T>
@@ -648,9 +652,18 @@ public:
   void stop()
   {
     crtpLogStopRequest request(m_id);
-    m_cf->startBatchRequest();
-    m_cf->addRequest(request, 2);
-    m_cf->handleRequests();
+
+	try
+	{
+		m_cf->startBatchRequest();
+		m_cf->addRequest(request, 2);
+		m_cf->handleRequests();
+	}
+	catch(std::exception e)
+	{
+		//ERROR HERE !
+	}
+    
   }
 
 private:

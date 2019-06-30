@@ -9,12 +9,19 @@
 #include "Crazyradio.h"
 #include "CrazyflieUSB.h"
 
+#if _WIN32
+#define _USE_MATH_DEFINES 
+#include <math.h>
+#include <algorithm>
+#endif
+
 #include <fstream>
 #include <cstring>
 #include <stdexcept>
 #include <thread>
 #include <cmath>
 #include <inttypes.h>
+
 
 const static int MAX_RADIOS = 16;
 const static int MAX_USB = 4;
@@ -26,12 +33,12 @@ std::mutex g_radioMutex[MAX_RADIOS];
 CrazyflieUSB* g_crazyflieUSB[MAX_USB];
 std::mutex g_crazyflieusbMutex[MAX_USB];
 
-Logger EmptyLogger;
+CFLogger EmptyLogger;
 
 
 Crazyflie::Crazyflie(
   const std::string& link_uri,
-  Logger& logger,
+	CFLogger& logger,
   std::function<void(const char*)> consoleCb)
   : m_radio(nullptr)
   , m_transport(nullptr)
@@ -250,7 +257,7 @@ void Crazyflie::sendExternalPoseUpdate(
 void Crazyflie::sendPing()
 {
   crtpEmpty req;
-  sendPacket(req);
+  sendPacketOrTimeout(req);
 }
 
 /**
