@@ -13,6 +13,14 @@ static int const CRTP_MAXSIZE_RESPONSE = 32;
 void quatdecompress(uint32_t comp, float q[4]);
 
 // Header
+
+//Allow windows compilation with struct packing support
+#if _WIN32
+#define __attribute__(x) 
+#pragma pack(push,1)
+#pragma warning(disable:4244 26495 4456 4201 26451)
+#endif
+
 struct crtp
 {
   constexpr crtp(uint8_t port, uint8_t channel)
@@ -1236,3 +1244,8 @@ struct crtpPlatformRSSIAck
     uint8_t rssi;
 };
 CHECKSIZE_RESPONSE(crtpPlatformRSSIAck)
+
+
+#ifdef _WIN32
+#pragma pack(pop)
+#endif
