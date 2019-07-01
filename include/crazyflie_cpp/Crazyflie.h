@@ -114,6 +114,13 @@ public:
     float duration;
   } __attribute__((packed));
 
+
+  struct LighthouseBSGeometry
+  {
+	  float origin[3];
+	  float matrix[3][3];
+  } __attribute__((packed));
+
 public:
   Crazyflie(
     const std::string& link_uri,
@@ -347,6 +354,11 @@ public:
     bool reversed = false,
     bool relative = true,
     uint8_t groupMask = 0);
+
+
+  //Lighthouse functions
+  void getLighthouseGeometries(LighthouseBSGeometry &bs1, LighthouseBSGeometry &bs2);
+  void setLighthouseGeometries(LighthouseBSGeometry bs1, LighthouseBSGeometry bs2);
 
   // Memory subsystem
   void readUSDLogFile(
