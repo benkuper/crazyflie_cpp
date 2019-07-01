@@ -1453,6 +1453,85 @@ void Crazyflie::startTrajectory(
   sendPacketOrTimeout(req);
 }
 
+void Crazyflie::getLighthouseGeometries(LighthouseBSGeometry &bs1, LighthouseBSGeometry &bs2)
+{
+	if(m_memoryTocEntries.size() == 0) requestMemoryToc();
+	for (const auto& entry : m_memoryTocEntries)
+	{
+		if (entry.type == MemoryTypeLH)
+		{
+			startBatchRequest();
+
+			size_t remainingBytes = entry.size;
+			size_t numRequests = ceil(remainingBytes / 24.0f);
+			for (size_t i = 0; i < numRequests; ++i) {
+				size_t size = std::min<size_t>(remainingBytes, 24);
+				crtpMemoryReadRequest req(entry.id, i * 24, size);
+				remainingBytes -= size;
+				addRequest(req, 5);
+			}
+
+			handleRequests();
+
+			remainingBytes = entry.size;
+
+			uint8_t data[96]; // 2 bs struct
+			memset(data, 0, sizeof(data));
+
+			for (size_t i = 0; i < numRequests; ++i) {
+				size_t size = std::min<size_t>(remainingBytes, 24);
+				const crtpMemoryReadResponse* response = getRequestResult<crtpMemoryReadResponse>(i);
+				memcpy(&data[i * 24], response->data, size);
+				remainingBytes -= size;
+			}
+
+			int bsDataLen = sizeof(LighthouseBSGeometry);
+			memcpy(&bs1, data, bsDataLen);
+			memcpy(&bs2, data+bsDataLen, bsDataLen);
+
+			return;
+		}
+	}
+
+	throw std::runtime_error("Could not find MemoryTypeLH !");
+	
+}
+
+void Crazyflie::setLighthouseGeometries(LighthouseBSGeometry bs1, LighthouseBSGeometry bs2)
+{
+    if (m_memoryTocEntries.size() == 0) requestMemoryToc();
+	
+	
+	uint8_t data[96]; // 2 bs struct
+	memcpy(data, reinterpret_cast<const uint8_t*>(&bs1), sizeof(LighthouseBSGeometry));
+	memcpy(data+sizeof(LighthouseBSGeometry), reinterpret_cast<const uint8_t*>(&bs2), sizeof(LighthouseBSGeometry));
+	
+	for (const auto& entry : m_memoryTocEntries)
+	{
+		if (entry.type == MemoryTypeLH)
+		{
+			startBatchRequest();
+
+			size_t remainingBytes = entry.size;
+			size_t numRequests = ceil(remainingBytes / 24.0f);
+			for (size_t i = 0; i < numRequests; ++i) {
+				size_t size = std::min<size_t>(remainingBytes, 24);
+				crtpMemoryWriteRequest req(entry.id, i * 24);
+				remainingBytes -= size;
+				memcpy(req.data, data + i * 24, size);
+				addRequestInternal(reinterpret_cast<const uint8_t*>(&req), 6 + size, 5);
+			}
+
+			handleRequests();
+
+			return;
+		}
+	}
+
+	throw std::runtime_error("Could not find MemoryTypeLH !");
+}
+
+
 void Crazyflie::readUSDLogFile(
   std::vector<uint8_t>& data)
 {
