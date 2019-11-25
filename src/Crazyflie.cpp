@@ -9,12 +9,19 @@
 #include "Crazyradio.h"
 #include "CrazyflieUSB.h"
 
+#if _WIN32
+#define _USE_MATH_DEFINES 
+#include <math.h>
+#include <algorithm>
+#endif
+
 #include <fstream>
 #include <cstring>
 #include <stdexcept>
 #include <thread>
 #include <cmath>
 #include <inttypes.h>
+
 
 const static int MAX_RADIOS = 16;
 const static int MAX_USB = 4;
@@ -26,12 +33,12 @@ std::mutex g_radioMutex[MAX_RADIOS];
 CrazyflieUSB* g_crazyflieUSB[MAX_USB];
 std::mutex g_crazyflieusbMutex[MAX_USB];
 
-Logger EmptyLogger;
+CFLogger EmptyLogger;
 
 
 Crazyflie::Crazyflie(
   const std::string& link_uri,
-  Logger& logger,
+	CFLogger& logger,
   std::function<void(const char*)> consoleCb)
   : m_radio(nullptr)
   , m_transport(nullptr)
@@ -250,7 +257,7 @@ void Crazyflie::sendExternalPoseUpdate(
 void Crazyflie::sendPing()
 {
   crtpEmpty req;
-  sendPacket(req);
+  sendPacketOrTimeout(req);
 }
 
 /**
@@ -877,7 +884,7 @@ void Crazyflie::startSetParamRequest()
   startBatchRequest();
 }
 
-void Crazyflie::addSetParam(uint8_t id, const ParamValue& value)
+void Crazyflie::addSetParam(uint16_t id, const ParamValue& value)
 {
   bool found = false;
   for (auto&& entry : m_paramTocEntries) {
@@ -991,7 +998,7 @@ void Crazyflie::setRequestedParams()
   handleRequests();
 }
 
-void Crazyflie::setParam(uint8_t id, const ParamValue& value)
+void Crazyflie::setParam(uint16_t id, const ParamValue& value)
 {
   startBatchRequest();
   addSetParam(id, value);
@@ -1099,13 +1106,19 @@ void Crazyflie::handleAck(
       if (m_consoleCallback) {
         m_consoleCallback(r->text);
       }
+      // std::cout << "Console CF: " << r->text << std::endl;
     }
-    // ROS_INFO("Console: %s", r->text);
   }
   else if (crtpLogGetInfoResponse::match(result)) {
     // handled in batch system
   }
+  else if (crtpLogGetInfoV2Response::match(result)) {
+    // handled in batch system
+  }
   else if (crtpLogGetItemResponse::match(result)) {
+    // handled in batch system
+  }
+  else if (crtpLogGetItemV2Response::match(result)) {
     // handled in batch system
   }
   else if (crtpLogControlResponse::match(result)) {
@@ -1133,6 +1146,9 @@ void Crazyflie::handleAck(
   else if (crtpParamTocGetItemV2Response::match(result)) {
     // handled in batch system
   }
+  else if (crtpParamSetByNameResponse::match(result)) {
+    // handled in batch system
+  }
   else if (crtpMemoryGetNumberResponse::match(result)) {
     // handled in batch system
   }
@@ -1152,6 +1168,9 @@ void Crazyflie::handleAck(
     // handled in batch system
   }
   else if (crtp(result.data[0]).port == 8) {
+    // handled in batch system
+  }
+  else if (crtp(result.data[0]).port == 13) {
     // handled in batch system
   }
   else if (crtpPlatformRSSIAck::match(result)) {
@@ -1253,7 +1272,10 @@ void Crazyflie::handleRequests(
 
   float timeout = baseTime + timePerRequest * m_batchRequests.size();
 
-  if (useSafeLink) {
+  // Workaround for https://github.com/USC-ACTLab/crazyswarm/issues/172
+  // Disable safelink for now, until packets are really not dropped
+  // anymore.
+  if (false /*useSafeLink*/) {
 
     const size_t numRequests = m_batchRequests.size();
     size_t remainingRequests = numRequests;
@@ -1445,6 +1467,85 @@ void Crazyflie::startTrajectory(
   crtpCommanderHighLevelStartTrajectoryRequest req(groupMask, relative, reversed, trajectoryId, timescale);
   sendPacketOrTimeout(req);
 }
+
+void Crazyflie::getLighthouseGeometries(LighthouseBSGeometry &bs1, LighthouseBSGeometry &bs2)
+{
+	if(m_memoryTocEntries.size() == 0) requestMemoryToc();
+	for (const auto& entry : m_memoryTocEntries)
+	{
+		if (entry.type == MemoryTypeLH)
+		{
+			startBatchRequest();
+
+			size_t remainingBytes = entry.size;
+			size_t numRequests = ceil(remainingBytes / 24.0f);
+			for (size_t i = 0; i < numRequests; ++i) {
+				size_t size = std::min<size_t>(remainingBytes, 24);
+				crtpMemoryReadRequest req(entry.id, i * 24, size);
+				remainingBytes -= size;
+				addRequest(req, 5);
+			}
+
+			handleRequests();
+
+			remainingBytes = entry.size;
+
+			uint8_t data[96]; // 2 bs struct
+			memset(data, 0, sizeof(data));
+
+			for (size_t i = 0; i < numRequests; ++i) {
+				size_t size = std::min<size_t>(remainingBytes, 24);
+				const crtpMemoryReadResponse* response = getRequestResult<crtpMemoryReadResponse>(i);
+				memcpy(&data[i * 24], response->data, size);
+				remainingBytes -= size;
+			}
+
+			int bsDataLen = sizeof(LighthouseBSGeometry);
+			memcpy(&bs1, data, bsDataLen);
+			memcpy(&bs2, data+bsDataLen, bsDataLen);
+
+			return;
+		}
+	}
+
+	throw std::runtime_error("Could not find MemoryTypeLH !");
+	
+}
+
+void Crazyflie::setLighthouseGeometries(LighthouseBSGeometry bs1, LighthouseBSGeometry bs2)
+{
+    if (m_memoryTocEntries.size() == 0) requestMemoryToc();
+	
+	
+	uint8_t data[96]; // 2 bs struct
+	memcpy(data, reinterpret_cast<const uint8_t*>(&bs1), sizeof(LighthouseBSGeometry));
+	memcpy(data+sizeof(LighthouseBSGeometry), reinterpret_cast<const uint8_t*>(&bs2), sizeof(LighthouseBSGeometry));
+	
+	for (const auto& entry : m_memoryTocEntries)
+	{
+		if (entry.type == MemoryTypeLH)
+		{
+			startBatchRequest();
+
+			size_t remainingBytes = entry.size;
+			size_t numRequests = ceil(remainingBytes / 24.0f);
+			for (size_t i = 0; i < numRequests; ++i) {
+				size_t size = std::min<size_t>(remainingBytes, 24);
+				crtpMemoryWriteRequest req(entry.id, i * 24);
+				remainingBytes -= size;
+				memcpy(req.data, data + i * 24, size);
+				addRequestInternal(reinterpret_cast<const uint8_t*>(&req), 6 + size, 5);
+			}
+
+			handleRequests();
+
+			return;
+		}
+	}
+
+	throw std::runtime_error("Could not find MemoryTypeLH !");
+}
+
 
 void Crazyflie::readUSDLogFile(
   std::vector<uint8_t>& data)

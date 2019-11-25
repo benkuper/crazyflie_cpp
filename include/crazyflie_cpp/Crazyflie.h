@@ -3,6 +3,7 @@
 #include <cstring>
 #include <sstream>
 #include <functional>
+#include <math.h>
 
 #include "Crazyradio.h"
 #include "crtp.h"
@@ -13,18 +14,22 @@
 
 #define ENABLE_SAFELINK 1
 
-class Logger
+#if _WIN32
+#pragma warning(disable:4267 4245)
+#endif
+
+class CFLogger
 {
 public:
-  Logger() {}
-  virtual ~Logger() {}
+	CFLogger() {}
+  virtual ~CFLogger() {}
 
   virtual void info(const std::string& /*msg*/) {}
   virtual void warning(const std::string& /*msg*/) {}
   virtual void error(const std::string& /*msg*/) {}
 };
 
-extern Logger EmptyLogger;
+extern CFLogger EmptyLogger;
 
 class Crazyflie
 {
@@ -74,7 +79,7 @@ public:
   };
 
   struct LogTocEntry {
-    uint8_t id;
+    uint16_t id;
     LogType type;
     std::string group;
     std::string name;
@@ -109,10 +114,17 @@ public:
     float duration;
   } __attribute__((packed));
 
+
+  struct LighthouseBSGeometry
+  {
+	  float origin[3];
+	  float matrix[3][3];
+  } __attribute__((packed));
+
 public:
   Crazyflie(
     const std::string& link_uri,
-    Logger& logger = EmptyLogger,
+	CFLogger& logger = EmptyLogger,
     std::function<void(const char*)> consoleCb = nullptr);
 
   int getProtocolVersion();
@@ -212,16 +224,43 @@ public:
   }
 
   template<class T>
-  void setParam(uint8_t id, const T& value) {
+  void setParam(uint16_t id, const T& value) {
     ParamValue v;
     memcpy(&v, &value, sizeof(value));
     setParam(id, v);
   }
 
+  template<class T>
+  void setParamByName(const char* group, const char* name, const T& value) {
+    crtpParamSetByNameRequest<T> request(group, name, value);
+    // sendPacketOrTimeoutInternal(reinterpret_cast<const uint8_t*>(&request), request.size());
+    startBatchRequest();
+    addRequestInternal(
+      reinterpret_cast<const uint8_t*>(&request), request.size(), request.responseSize() - 1);
+    handleRequests();
+    auto response = getRequestResult<crtpParamSetByNameResponse>(0);
+
+    uint8_t error = response->error(request.responseSize());
+    if (error != 0) {
+      std::stringstream sstr;
+      sstr << "Couldn't set parameter " << group << "." << name << "!";
+      if (error == ENOENT) {
+        sstr << "No such variable." << std::endl;
+      } else if (error == EINVAL) {
+        sstr << "Wrong type." << std::endl;
+      } else if (error == EACCES) {
+        sstr << "Variable is readonly." << std::endl;
+      } else {
+        sstr << " Error: " << (int)error << std::endl;
+      }
+      throw std::runtime_error(sstr.str());
+    }
+  }
+
   void startSetParamRequest();
 
   template<class T>
-  void addSetParam(uint8_t id, const T& value) {
+  void addSetParam(uint16_t id, const T& value) {
     ParamValue v;
     memcpy(&v, &value, sizeof(value));
     addSetParam(id, v);
@@ -231,7 +270,7 @@ public:
 
 
   template<class T>
-  T getParam(uint8_t id) const {
+  T getParam(uint16_t id) const {
     ParamValue v = getParam(id);
     return *(reinterpret_cast<T*>(&v));
   }
@@ -315,6 +354,11 @@ public:
     bool reversed = false,
     bool relative = true,
     uint8_t groupMask = 0);
+
+
+  //Lighthouse functions
+  void getLighthouseGeometries(LighthouseBSGeometry &bs1, LighthouseBSGeometry &bs2);
+  void setLighthouseGeometries(LighthouseBSGeometry bs1, LighthouseBSGeometry bs2);
 
   // Memory subsystem
   void readUSDLogFile(
@@ -452,11 +496,11 @@ private:
   bool unregisterLogBlock(
     uint8_t id);
 
-  void setParam(uint8_t id, const ParamValue& value);
-  void addSetParam(uint8_t id, const ParamValue& value);
+  void setParam(uint16_t id, const ParamValue& value);
+  void addSetParam(uint16_t id, const ParamValue& value);
 
 
-  const ParamValue& getParam(uint8_t id) const {
+  const ParamValue& getParam(uint16_t id) const {
     return m_paramValues.at(id);
   }
 
@@ -473,7 +517,7 @@ private:
   std::map<uint8_t, std::function<void(crtpLogDataResponse*, uint8_t)> > m_logBlockCb;
 
   std::vector<ParamTocEntry> m_paramTocEntries;
-  std::map<uint8_t, ParamValue> m_paramValues;
+  std::map<uint16_t, ParamValue> m_paramValues;
 
   std::vector<MemoryTocEntry> m_memoryTocEntries;
 
@@ -507,7 +551,7 @@ private:
   int m_protocolVersion;
 
   // logging
-  Logger& m_logger;
+  CFLogger& m_logger;
 };
 
 template<class T>
@@ -524,15 +568,20 @@ public:
   {
     m_id = m_cf->registerLogBlock([=](crtpLogDataResponse* r, uint8_t s) { this->handleData(r, s);});
     if (m_cf->m_log_use_V2) {
-      crtpLogCreateBlockV2Request request;
-      request.id = m_id;
-      int i = 0;
+      std::vector<logBlockItemV2> logBlockItems;
+      size_t s = 0;
       for (auto&& pair : variables) {
         const Crazyflie::LogTocEntry* entry = m_cf->getLogTocEntry(pair.first, pair.second);
         if (entry) {
-          request.items[i].logType = entry->type;
-          request.items[i].id = entry->id;
-          ++i;
+          s += Crazyflie::size(entry->type);
+          if (s > 26) {
+            std::stringstream sstr;
+            sstr << "Can't configure that many variables in a single log block!"
+                 << " Ignoring " << pair.first << "." << pair.second << std::endl;
+            throw std::runtime_error(sstr.str());
+          } else {
+            logBlockItems.push_back({static_cast<uint8_t>(entry->type), entry->id});
+          }
         }
         else {
           std::stringstream sstr;
@@ -541,16 +590,31 @@ public:
         }
       }
 
-      m_cf->startBatchRequest();
-      m_cf->addRequestInternal(reinterpret_cast<const uint8_t*>(&request), 3 + 3*i, 2);
-      m_cf->handleRequests();
-      auto r = m_cf->getRequestResult<crtpLogControlResponse>(0);
-      if (r->result != crtpLogControlResultOk
-          && r->result != crtpLogControlResultBlockExists) {
-        std::stringstream sstr;
-        sstr << "Could not create log block! Result: " << (int)r->result << " " << (int)m_id << " " << (int)r->requestByte1 << " " << (int)r->command;
-        throw std::runtime_error(sstr.str());
+      // we can use up to 9 items per request
+      size_t requests = ceil(logBlockItems.size() / 9.0f);
+      size_t i = 0;
+      for (size_t r = 0; r < requests; ++r) {
+        size_t numElements = std::min<size_t>(logBlockItems.size() - i, 9);
+        if (r == 0) {
+          crtpLogCreateBlockV2Request request;
+          request.id = m_id;
+          memcpy(request.items, &logBlockItems[i], sizeof(logBlockItemV2) * numElements);
+          m_cf->sendPacketOrTimeoutInternal(reinterpret_cast<const uint8_t*>(&request), 3 + 3*numElements);
+        } else {
+          crtpLogAppendBlockV2Request request;
+          request.id = m_id;
+          memcpy(request.items, &logBlockItems[i], sizeof(logBlockItemV2) * numElements);
+          m_cf->sendPacketOrTimeoutInternal(reinterpret_cast<const uint8_t*>(&request), 3 + 3*numElements);
+        }
+        i += numElements;
       }
+      // auto r = m_cf->getRequestResult<crtpLogControlResponse>(0);
+      // if (r->result != crtpLogControlResultOk
+      //     && r->result != crtpLogControlResultBlockExists) {
+      //   std::stringstream sstr;
+      //   sstr << "Could not create log block! Result: " << (int)r->result << " " << (int)m_id << " " << (int)r->requestByte1 << " " << (int)r->command;
+      //   throw std::runtime_error(sstr.str());
+      // }
     } else {
       crtpLogCreateBlockRequest request;
       request.id = m_id;
@@ -600,9 +664,18 @@ public:
   void stop()
   {
     crtpLogStopRequest request(m_id);
-    m_cf->startBatchRequest();
-    m_cf->addRequest(request, 2);
-    m_cf->handleRequests();
+
+	try
+	{
+		m_cf->startBatchRequest();
+		m_cf->addRequest(request, 2);
+		m_cf->handleRequests();
+	}
+	catch(std::exception e)
+	{
+		//ERROR HERE !
+	}
+    
   }
 
 private:
@@ -659,10 +732,17 @@ public:
                  << " Ignoring " << first << "." << second << std::endl;
             throw std::runtime_error(sstr.str());
           } else {
-            request.items[i].logType = entry->type;
-            request.items[i].id = entry->id;
-            ++i;
-            m_types.push_back(entry->type);
+            if (i < 9) {
+              request.items[i].logType = entry->type;
+              request.items[i].id = entry->id;
+              ++i;
+              m_types.push_back(entry->type);
+            } else {
+              std::stringstream sstr;
+              sstr << "Can only log up to 9 variables at a time!"
+                   << " Ignoring " << first << "." << second << std::endl;
+              throw std::runtime_error(sstr.str());
+            }
           }
         }
         else {
@@ -879,7 +959,6 @@ public:
     float qw;
   };
 
-  // Crazyswarm experimental
   void sendExternalPoses(
     const std::vector<externalPose>& data);
 
@@ -887,18 +966,15 @@ public:
 
   void emergencyStopWatchdog();
 
-  // // Parameter support
-  // template<class T>
-  // void setParam(
-  //   uint8_t group,
-  //   uint8_t id,
-  //   Crazyflie::ParamType type,
-  //   const T& value)
-  // {
-  //   Crazyflie::ParamValue v;
-  //   memcpy(&v, &value, sizeof(value));
-  //   setParam(group, id, type, v);
-  // }
+  template<class T>
+  void setParam(
+    const char* group,
+    const char* name,
+    const T& value)
+  {
+    crtpParamSetByNameRequest<T> request(group, name, value);
+    sendPacket(reinterpret_cast<const uint8_t*>(&request), request.size());
+  }
 
 protected:
   void sendPacket(

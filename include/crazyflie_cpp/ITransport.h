@@ -3,9 +3,20 @@
 #include <stdint.h>
 #include <fstream>
 
+
+
+
 class ITransport
 {
 public:
+
+//Allow windows compilation with struct packing support
+#if _WIN32
+#define __attribute__(x) 
+#pragma pack(push,1)
+#pragma warning(disable:4244 26495 4456 4201 26451)
+#endif
+
   struct Ack
   {
     Ack()
@@ -20,6 +31,12 @@ public:
 
     uint8_t size;
   }__attribute__((packed));
+
+#ifdef _WIN32
+#pragma pack(pop)
+#endif
+
+
 
 public:
   ITransport()
@@ -54,3 +71,5 @@ protected:
   bool m_enableLogging;
   std::ofstream m_file;
 };
+
+

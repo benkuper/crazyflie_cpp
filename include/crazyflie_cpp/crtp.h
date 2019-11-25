@@ -6,6 +6,7 @@
 static int const CRTP_MAX_DATA_SIZE = 30;
 static int const CRTP_MAXSIZE = 31;
 #define CHECKSIZE(s) static_assert(sizeof(s) <= CRTP_MAXSIZE, #s " packet is too large");
+#define CHECKSIZE_WITH_STATE(s, stateSize) static_assert(sizeof(s) - stateSize <= CRTP_MAXSIZE, #s " packet is too large");
 
 static int const CRTP_MAXSIZE_RESPONSE = 32;
 #define CHECKSIZE_RESPONSE(s) static_assert(sizeof(s) <= CRTP_MAXSIZE_RESPONSE, #s " packet is too large");
@@ -13,6 +14,14 @@ static int const CRTP_MAXSIZE_RESPONSE = 32;
 void quatdecompress(uint32_t comp, float q[4]);
 
 // Header
+
+//Allow windows compilation with struct packing support
+#if _WIN32
+#define __attribute__(x) 
+#pragma pack(push,1)
+#pragma warning(disable:4244 26495 4456 4201 26451)
+#endif
+
 struct crtp
 {
   constexpr crtp(uint8_t port, uint8_t channel)
@@ -68,6 +77,17 @@ struct crtpConsoleResponse
 CHECKSIZE_RESPONSE(crtpConsoleResponse)
 
 // Port 2 (Parameters)
+
+enum ParamType : uint8_t 
+{
+  ParamTypeUint8  = 0x00 | (0x00<<2) | (0x01<<3),
+  ParamTypeInt8   = 0x00 | (0x00<<2) | (0x00<<3),
+  ParamTypeUint16 = 0x01 | (0x00<<2) | (0x01<<3),
+  ParamTypeInt16  = 0x01 | (0x00<<2) | (0x00<<3),
+  ParamTypeUint32 = 0x02 | (0x00<<2) | (0x01<<3),
+  ParamTypeInt32  = 0x02 | (0x00<<2) | (0x00<<3),
+  ParamTypeFloat  = 0x02 | (0x01<<2) | (0x00<<3),
+};
 
 struct crtpParamTocGetItemResponse;
 struct crtpParamTocGetItemRequest
@@ -342,6 +362,58 @@ struct crtpParamValueV2Response
   };
 } __attribute__((packed));
 CHECKSIZE_RESPONSE(crtpParamValueV2Response)
+
+template <class T>
+struct crtpParamSetByNameRequest
+{
+  crtpParamSetByNameRequest(
+    const char* group,
+    const char* name,
+    const T& value);
+
+    const crtp header;
+    const uint8_t cmd = 0;
+    uint8_t data[29];
+
+  uint8_t size() const {
+    return size_;
+  }
+
+  uint8_t responseSize() const {
+    return responseSize_;
+  }
+
+private:
+    // member state (not part of packet)
+    uint8_t size_;
+    uint8_t responseSize_;
+
+private:
+  crtpParamSetByNameRequest(
+    const char* group,
+    const char* name,
+    uint8_t paramType,
+    const void* value,
+    uint8_t valueSize);
+} __attribute__((packed));
+CHECKSIZE_WITH_STATE(crtpParamSetByNameRequest<float>, 2) // largest kind of param
+
+struct crtpParamSetByNameResponse
+{
+  static bool match(const Crazyradio::Ack& response) {
+    return response.size > 2 &&
+           (crtp(response.data[0]) == crtp(2, 3));
+  }
+
+  uint8_t data[32];
+
+  uint8_t error(uint8_t responseSize) const {
+    return data[responseSize];
+  }
+
+} __attribute__((packed));
+CHECKSIZE_RESPONSE(crtpParamSetByNameResponse) // largest kind of param
+
 
 // Port 3 (Commander)
 
@@ -806,6 +878,20 @@ struct crtpLogCreateBlockV2Request
 } __attribute__((packed));
 CHECKSIZE(crtpLogCreateBlockV2Request)
 
+struct crtpLogAppendBlockV2Request
+{
+  crtpLogAppendBlockV2Request()
+  : header(5, 1)
+  , command(7)
+  {
+  }
+
+  const crtp header;
+  const uint8_t command;
+  uint8_t id;
+  logBlockItemV2 items[9];
+} __attribute__((packed));
+CHECKSIZE(crtpLogAppendBlockV2Request)
 
 // Port 0x06 (External Position Update)
 
@@ -1236,3 +1322,8 @@ struct crtpPlatformRSSIAck
     uint8_t rssi;
 };
 CHECKSIZE_RESPONSE(crtpPlatformRSSIAck)
+
+
+#ifdef _WIN32
+#pragma pack(pop)
+#endif
