@@ -884,7 +884,7 @@ void Crazyflie::startSetParamRequest()
   startBatchRequest();
 }
 
-void Crazyflie::addSetParam(uint8_t id, const ParamValue& value)
+void Crazyflie::addSetParam(uint16_t id, const ParamValue& value)
 {
   bool found = false;
   for (auto&& entry : m_paramTocEntries) {
@@ -998,7 +998,7 @@ void Crazyflie::setRequestedParams()
   handleRequests();
 }
 
-void Crazyflie::setParam(uint8_t id, const ParamValue& value)
+void Crazyflie::setParam(uint16_t id, const ParamValue& value)
 {
   startBatchRequest();
   addSetParam(id, value);
@@ -1106,13 +1106,19 @@ void Crazyflie::handleAck(
       if (m_consoleCallback) {
         m_consoleCallback(r->text);
       }
+      // std::cout << "Console CF: " << r->text << std::endl;
     }
-    // ROS_INFO("Console: %s", r->text);
   }
   else if (crtpLogGetInfoResponse::match(result)) {
     // handled in batch system
   }
+  else if (crtpLogGetInfoV2Response::match(result)) {
+    // handled in batch system
+  }
   else if (crtpLogGetItemResponse::match(result)) {
+    // handled in batch system
+  }
+  else if (crtpLogGetItemV2Response::match(result)) {
     // handled in batch system
   }
   else if (crtpLogControlResponse::match(result)) {
@@ -1140,6 +1146,9 @@ void Crazyflie::handleAck(
   else if (crtpParamTocGetItemV2Response::match(result)) {
     // handled in batch system
   }
+  else if (crtpParamSetByNameResponse::match(result)) {
+    // handled in batch system
+  }
   else if (crtpMemoryGetNumberResponse::match(result)) {
     // handled in batch system
   }
@@ -1159,6 +1168,9 @@ void Crazyflie::handleAck(
     // handled in batch system
   }
   else if (crtp(result.data[0]).port == 8) {
+    // handled in batch system
+  }
+  else if (crtp(result.data[0]).port == 13) {
     // handled in batch system
   }
   else if (crtpPlatformRSSIAck::match(result)) {
@@ -1260,7 +1272,10 @@ void Crazyflie::handleRequests(
 
   float timeout = baseTime + timePerRequest * m_batchRequests.size();
 
-  if (useSafeLink) {
+  // Workaround for https://github.com/USC-ACTLab/crazyswarm/issues/172
+  // Disable safelink for now, until packets are really not dropped
+  // anymore.
+  if (false /*useSafeLink*/) {
 
     const size_t numRequests = m_batchRequests.size();
     size_t remainingRequests = numRequests;
