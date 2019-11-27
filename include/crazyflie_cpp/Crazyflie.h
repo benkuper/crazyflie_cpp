@@ -399,7 +399,7 @@ private:
    const uint8_t* data,
    uint32_t length,
    bool useSafeLink = ENABLE_SAFELINK,
-   float timeout = 1.0);
+   float timeout = 0.4f);
 
   template<typename R>
   void sendPacketOrTimeout(
