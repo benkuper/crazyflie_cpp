@@ -59,6 +59,12 @@ public:
         return m_datarate;
     }
 
+	void setMode(int mode);
+
+	int getMode(int mode) const {
+		return m_mode;
+	}
+
     void setPower(
         Power power);
 
@@ -99,5 +105,6 @@ private:
     uint8_t m_channel;
     uint64_t m_address;
     Datarate m_datarate;
+	int m_mode;
     bool m_ackEnable;
 };

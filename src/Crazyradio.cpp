@@ -16,6 +16,7 @@ enum
     ACK_ENABLE          = 0x10,
     SET_CONT_CARRIER    = 0x20,
     SCANN_CHANNELS      = 0x21,
+	SET_MODE			= 0x22,
     LAUNCH_BOOTLOADER   = 0xFF,
 };
 
@@ -27,6 +28,7 @@ Crazyradio::Crazyradio(
     , m_address(0)
     , m_datarate(Datarate_250KPS)
     , m_ackEnable(true)
+	, m_mode(2)
 {
     open(devid);
     setDatarate(Datarate_2MPS);
@@ -79,6 +81,12 @@ void Crazyradio::setAddress(uint64_t address)
     //     std::cerr << "sendVendorSetup: " << libusb_error_name(status) << std::endl;
     // }
     m_address = address;
+}
+
+void Crazyradio::setMode(int mode)
+{
+	sendVendorSetup(SET_MODE, mode, 0, NULL, 0);
+	m_mode = mode;
 }
 
 void Crazyradio::setDatarate(Datarate datarate)
