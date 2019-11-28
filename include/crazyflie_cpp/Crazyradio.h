@@ -61,7 +61,7 @@ public:
 
 	void setMode(int mode);
 
-	int getMode(int mode) const {
+	int getMode() const {
 		return m_mode;
 	}
 
