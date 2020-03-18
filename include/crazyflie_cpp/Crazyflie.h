@@ -148,23 +148,28 @@ public:
     float qx, float qy, float qz, float qw,
     float rollRate, float pitchRate, float yawRate);
 
+  void sendVelocityWorldSetpoint(
+    float x, float y, float z, float yawRate);
+
   void sendHoverSetpoint(
     float vx,
     float vy,
     float yawrate,
     float zDistance);
 
-  void sendStop();
-
-  void emergencyStop();
-
-  void emergencyStopWatchdog();
-
   void sendPositionSetpoint(
     float x,
     float y,
     float z,
     float yaw);
+
+  void notifySetpointsStop(uint32_t remainValidMillisecs);
+
+  void sendStop();
+
+  void emergencyStop();
+
+  void emergencyStopWatchdog();
 
   void sendExternalPositionUpdate(
     float x,
